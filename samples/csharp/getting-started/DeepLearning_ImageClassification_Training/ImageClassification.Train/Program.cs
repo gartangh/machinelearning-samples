@@ -6,9 +6,10 @@ using System.Linq;
 using Common;
 using ImageClassification.DataModels;
 using Microsoft.ML;
-using Microsoft.ML.Transforms;
+using Microsoft.ML.Trainers;
 using Microsoft.ML.Vision;
 using static Microsoft.ML.Transforms.ValueToKeyMappingEstimator;
+using static Microsoft.ML.Vision.ImageClassificationTrainer;
 
 namespace ImageClassification.Train
 {
@@ -32,7 +33,8 @@ namespace ImageClassification.Train
 
             // Specify MLContext Filter to only show feedback log/traces about ImageClassification
             // This is not needed for feedback output if using the explicit MetricsCallback parameter
-            mlContext.Log += FilterMLContextLog;           
+            mlContext.Log += FilterMLContextLog;
+
 
             // 2. Load the initial full image-set into an IDataView and shuffle so it'll be better balanced
             IEnumerable<ImageData> images = LoadImagesFromDirectory(folder: fullImagesetFolderPath, useFolderNameAsLabel: true);
@@ -56,33 +58,33 @@ namespace ImageClassification.Train
 
             // 5. Define the model's training pipeline using DNN default values
             //
-            var pipeline = mlContext.MulticlassClassification.Trainers
-                    .ImageClassification(featureColumnName: "Image",
-                                         labelColumnName: "LabelAsKey",
-                                         validationSet: testDataView)
-                .Append(mlContext.Transforms.Conversion.MapKeyToValue(outputColumnName: "PredictedLabel",
-                                                                      inputColumnName: "PredictedLabel"));
+            //var pipeline = mlContext.MulticlassClassification.Trainers
+            //        .ImageClassification(featureColumnName: "Image",
+            //                             labelColumnName: "LabelAsKey",
+            //                             validationSet: testDataView)
+            //    .Append(mlContext.Transforms.Conversion.MapKeyToValue(outputColumnName: "PredictedLabel",
+            //                                                          inputColumnName: "PredictedLabel"));
 
             // 5.1 (OPTIONAL) Define the model's training pipeline by using explicit hyper-parameters
-            //
-            //var options = new ImageClassificationTrainer.Options()
-            //{
-            //    FeatureColumnName = "Image",
-            //    LabelColumnName = "LabelAsKey",
-            //    // Just by changing/selecting InceptionV3/MobilenetV2/ResnetV250  
-            //    // you can try a different DNN architecture (TensorFlow pre-trained model). 
-            //    Arch = ImageClassificationTrainer.Architecture.MobilenetV2,
-            //    Epoch = 50,       //100
-            //    BatchSize = 10,
-            //    LearningRate = 0.01f,
-            //    MetricsCallback = (metrics) => Console.WriteLine(metrics),
-            //    ValidationSet = testDataView
-            //};
 
-            //var pipeline = mlContext.MulticlassClassification.Trainers.ImageClassification(options)
-            //        .Append(mlContext.Transforms.Conversion.MapKeyToValue(
-            //            outputColumnName: "PredictedLabel",
-            //            inputColumnName: "PredictedLabel"));
+            var options = new ImageClassificationTrainer.Options()
+            {
+                FeatureColumnName = "Image",
+                LabelColumnName = "LabelAsKey",
+                // Just by changing/selecting InceptionV3/MobilenetV2/ResnetV250  
+                // you can try a different DNN architecture (TensorFlow pre-trained model). 
+                Arch = ImageClassificationTrainer.Architecture.MobilenetV2,
+                LearningRateScheduler = new ExponentialLRDecay(),
+                Epoch = 50,       //100
+                BatchSize = 10,
+                MetricsCallback = (metrics) => PrintMetrics(metrics),
+                ValidationSet = testDataView
+            };
+
+            var pipeline = mlContext.MulticlassClassification.Trainers.ImageClassification(options)
+                    .Append(mlContext.Transforms.Conversion.MapKeyToValue(
+                        outputColumnName: "PredictedLabel",
+                        inputColumnName: "PredictedLabel"));
 
             // 6. Train/create the ML model
             Console.WriteLine("*** Training the image classification model with DNN Transfer Learning on top of the selected pre-trained model/architecture ***");
@@ -111,7 +113,15 @@ namespace ImageClassification.Train
             Console.WriteLine("Press any key to finish");
             Console.ReadKey();
         }
-       
+
+        private static void PrintMetrics(ImageClassificationMetrics metrics)
+        {
+            if (metrics.Train != null && metrics.Train.DatasetUsed != ImageClassificationMetrics.Dataset.Train)
+                Console.WriteLine(metrics + $"   Learning Rate: {metrics.Train.LearningRate}, Cross-Entropy: {metrics.Train.CrossEntropy}");
+            else
+                Console.WriteLine(metrics);
+        }
+
         private static void EvaluateModel(MLContext mlContext, IDataView testDataset, ITransformer trainedModel)
         {
             Console.WriteLine("Making predictions in bulk for evaluating model's quality...");
@@ -121,7 +131,7 @@ namespace ImageClassification.Train
 
             var predictionsDataView = trainedModel.Transform(testDataset);
 
-            var metrics = mlContext.MulticlassClassification.Evaluate(predictionsDataView, labelColumnName:"LabelAsKey", predictedLabelColumnName: "PredictedLabel");
+            var metrics = mlContext.MulticlassClassification.Evaluate(predictionsDataView, labelColumnName: "LabelAsKey", predictedLabelColumnName: "PredictedLabel");
             ConsoleHelper.PrintMultiClassClassificationMetrics("TensorFlow DNN Transfer Learning", metrics);
 
             watch.Stop();
